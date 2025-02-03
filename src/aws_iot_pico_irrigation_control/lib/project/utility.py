@@ -46,14 +46,14 @@ def debug_message(message: str, verbose: bool) -> None:
 
 def debug_network_status(
         WLAN: network.WLAN,
-        mode: str,
+        mode: int,
         verbose: bool
     ) -> None:
     """Print verbose WLAN status debug message if verbose flag is True.
 
     Args:
         WLAN (network.WLAN): WLAN instance.
-        mode (str): WLAN instance mode.
+        mode (int): WLAN instance mode.
         verbose (bool): Message print flag.
     """
     WLAN_MODE_STR = ("STA", "AP")[mode]

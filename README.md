@@ -1,11 +1,61 @@
-# Micropython Default
+# AWS IoT Pico W 'Thing' - 'irrigation-control'
 
-> [!NOTE]  
-> This project is a WIP.
+![MicroPython](https://img.shields.io/badge/MicroPython-v1.24.0-blue)
 
 ## Introduction
 
-This MicroPython project acts as a template, which forms the basis for creating a Pico W 'thing' in an AWS IoT Core context. It also acts as a template for Micropython projects that need to facilitate access to WiFi through serving a credentials form. The default `main.py` runs an async application function (`async_main`), which carries out the following steps:
+<!-- [!TIP] [!IMPORTANT] [!WARNING] [!CAUTION] -->
+
+This is a MicroPython project for an irrigation control system, using a Raspberry Pi Pico W 'thing' in an AWS IoT Core context. The Pico acts as an irrigation control, reading soil moisture sensors and activating motorised ball valves, which facilitate the irrigation of their respective zones.
+
+Telemetry is published using MQTT with AWS IoT Core service as a broker. Data is stored in an AWS S3 bucket with storage triggered by an AWS IoT message routing rule alongside an Amazon Data Firehose stream. This stream batches messages, thereby limiting S3 writes.
+
+> [!NOTE]  
+> This project is a WIP and full setup details, diagrams & guide are to follow in the near future.
+
+## Equipment Used
+
+The project equipment and sensors are detailed below. All items were purchased from [The Pi Hut](https://thepihut.com/), except the moisture sensor and the Wago project enclosure.
+
+### Raspberry Pi Pico W
+
+The Raspberry Pi Pico W is a wireless-enabled version of the RP2040-based board, adding 2.4GHz 802.11n WiFi connectivity. WiFi is enabled via the use of an Infineon CYW43439 wireless chip. The CYW43439 supports IEEE 802.11 b/g/n wireless LAN, and Bluetooth 5.2.
+
+I plan on replacing the Pico W with the Pico 2 W in the near future. This would require another irrigation board as the Pico must be soldered onto the board.
+
+### BC Robotics Pico Irrigation board
+
+The Raspberry Pi Pico Irrigation Board is an all-in-one 5 channel MOSFET breakout complete with a DC power converter for the Raspberry Pi Pico and Pico W. This board allows the Pico to operate within a 12V system and switch high current inductive loads such as solenoids, pumps, or large relays. Product can be purchased from [Pi Hut](https://thepihut.com/products/irrigation-board-for-raspberry-pi-pico).
+
+#### Drawing
+
+![Pico irrigation board drawing](docs/img/raspberry-pi-pico-irrigation-board-drawing.png)
+
+#### Schematic
+
+![Pico irrigation board schematic](docs/img/raspberry-pi-pico-irrigation-board-schematic.png)
+
+#### ADC 3 Schematic
+
+![Pico irrigation board ADC 3 schematic](docs/img/raspberry-pi-pico-GPIO29-ADC3.png)
+
+### Pino-Tech SoilWatch 10 Moisture Sensor
+
+[SoilWatch 10](https://pino-tech.eu/soilwatch10/) is a soil moisture sensor that allows you to measure relative water content in the soil. This project uses three sensors.
+
+![SoilWatch 10](docs/img/soilwatch-10.jpg)
+
+### Wago Wagobox Capsule
+
+The [Wagobox Capsule](https://www.wago.com/gb/installation-terminal-blocks-and-connectors/wago-box/p/207-3306) is an IP68 enclosure and is used as a waterproof container for the project.
+
+![Wagobox Capsule](docs/img/wagobox.jpg)
+
+## Project Development Details
+
+The default `main.py` runs an async application function (`async_main`), which carries out the related and dependent tasks detailed below.
+
+### Establish & monitor WLAN connection
 
 1. Attempt WiFi STA connection using env/secrets
 2. Synchronise network time on STA connection
@@ -18,55 +68,55 @@ This MicroPython project acts as a template, which forms the basis for creating 
     4. Synchronise network time on STA connection
 6. Repeat steps 3 - 5 as necessary
 
-Modification of `async_main` should allow extra functionality, such as connection to an AWS IoT Core endpoint via the MicroPython MQTT libraries and the provided template functions in `lib/project/connection.py`.
+### Facilitate AWS IoT Core communication over MQTT
 
-This project has the following dependency tree:
+1. Publish telemetry data at set intervals
+2. Carry out tasks in command topic messages
+    1. Read data from moisture sensor
+    2. Activate solenoid valve
 
-```text
-micropython-default
-├── picoproject                       <-- MicroPython project CLI
-├── bump-my-version (group: dev)
-├── micropython-rp2-rpi-pico-w-stubs  <-- MicroPython Pico W stubs
-├── ruff (group: dev)                 <-- Linting/formatting
-├── sphinx (group: dev)               <-- Documentation
-└── sphinx-rtd-theme (group: dev)     <-- Read the docs theme
-```
+### Project Layout
 
-I am testing the use of another library, picoproject, which is a CLI (README[repository](https://github.com/andyrids/picoproject)) for managing local installation of MicroPython packages for development, MicroPython binary compilation and exporting of project files.
-
-## Project Layout
+The project is laid out as below. The certification must be setup and generated on AWS IoT Core and loaded onto your device. The `der` certificates are listed below as an example and are not included.
 
 ```text
-src/micropython_default
+src/aws_iot_pico_irrigation_control
+├── certs
+│   ├── AmazonRootCA1.cer                   <-- AWS CA certificate 
+│   ├── irrigation-control.certificate.der  <-- AWS IoT Core 'thing' certificate 
+│   └── irrigation-control.private.key.der  <-- AWS IoT Core 'thing' private key 
 ├── env
-│   └── secrets.py                  <-- WiFi credentials for STA/AP mode
+│   └── secrets.py                          <-- WiFi & AWS credentials for STA/AP mode
 ├── lib
-│   ├── microdot                    <-- microdot library
+│   ├── microdot                            <-- microdot library
 │   │   ├── __init__.py
 │   │   └── microdot.py
-│   ├── project                     <-- project custom modules
+│   ├── project                             <-- project custom modules
 │   │   ├── connection.py
+│   │   ├── irrigation.py
 │   │   ├── telemetry.py
 │   │   └── utility.py
-│   └── umqtt                       <-- MicroPython umqtt library
+│   └── umqtt                               <-- MicroPython umqtt library
 │       ├── robust.py
 │       └── simple.py
-└── server                          <-- microdot server files
+└── server                                  <-- microdot server files
     ├── assets
     │   ├── bootstrap.min.css.gz
     │   └── favicon.ico.gz
     └── index.html
 ```
 
-`micropython-default/src/micropython_default` is the main project directory.
+`micropython-default/src/aws_iot_pico_irrigation_control` is the main project directory.
 
-The `env/secrets.py` is used to store credentials to connect to a WiFi network and to connect to the Pico, when in AP mode. The default secrets file contents are shown below:
+The `env/secrets.py` is used to store credentials to connect to a WiFi network and to connect to the Pico, when in AP mode. The secrets file also stores the AWS IoT Core MQTT endpoint and client ID. The default secrets file contents are shown below as an example.
 
 ```python
 AP_SSID = None
 AP_PASSWORD = None
 WLAN_SSID = None
 WLAN_PASSWORD = None
+MQTT_ENDPOINT = None  # must replace
+MQTT_CLIENT_ID = None # must replace
 ```
 
 Example updated secrets:
@@ -76,6 +126,8 @@ AP_SSID = None
 AP_PASSWORD = None
 WLAN_SSID = "MY_WIFI_SSID"
 WLAN_PASSWORD = "MY_WIFI_PASSWORD"
+MQTT_ENDPOINT = "************-****.iot.eu-****-1.amazonaws.com"
+MQTT_CLIENT_ID = "my-client-id"
 ```
 
 These values are dynamically imported/set using `dynamic_get_secret` and `dynamic_set_secret` in the `lib/project/utility.py` module. This functions facilitate secret variable imports like a python module, even after a secret value change.
@@ -87,7 +139,7 @@ The `server` directory holds assets and an `index.html` file, which creates a fo
 > [!TIP]  
 > Detailed docstrings are included at the module and function/class level for this project.
 
-## Installation
+### Installation
 
 **uv** is used as the Python package manager. To install **uv** see the installation
 guide @ [uv documentation](https://docs.astral.sh/uv/getting-started/installation/).
@@ -105,58 +157,67 @@ Activate the virtual environment created by uv with the following command:
 source .venv/bin/activate
 ```
 
-## Build & distribute the template
+### Build & distribute the template
 
 > [!WARNING]  
 > Make sure your Pico W device is connected and your virtual environment is activated.
 
-Check your Pico's current filesystem with the following mpremote command:
+Check your Pico's current filesystem with the following `mpremote` command:
 
 ```bash
-(micropython-default) mpremote fs ls
+(aws-iot-pico-irrigation-control) mpremote fs ls
 ```
 
 Output of `ls :` will indicate an empty system. The following command will clear the Pico filesystem (use caution):
 
 ```bash
-(micropython-default) mpremote exec --no-follow "import os, machine, rp2; os.umount('/'); bdev = rp2.Flash(); os.VfsLfs2.mkfs(bdev, progsize=256); vfs = os.VfsLfs2(bdev, progsize=256); os.mount(vfs, '/'); machine.reset()"
+(aws-iot-pico-irrigation-control) mpremote exec --no-follow "import os, machine, rp2; os.umount('/'); bdev = rp2.Flash(); os.VfsLfs2.mkfs(bdev, progsize=256); vfs = os.VfsLfs2(bdev, progsize=256); os.mount(vfs, '/'); machine.reset()"
 ```
 
-With the recent **picoproject** CLI dependency, you can also th command below, which will use mpreote in the background to format the device.
+You can also use my [`andyrids/picoproject`](https://github.com/andyrids/picoproject) CLI, which is included as a **dev** dependency. The following CLI command uses `mpremote` as detailed above:
 
 ```bash
-(micropython-default) CLI format
+(aws-iot-pico-irrigation-control) CLI format
 ```
 
-
-From the project root directory, the following command will recursively copy all files within the project
+Once you have setup your IoT 'thing' correctly on AWS console and added your credentials to the secrets file, you could use the following command from the project root directory, and recursively copy all files within the project
 directory to the Pico W filesystem:
 
 ```bash
-$ (micropython-default) mpremote cp -r ./src/micropython_default/* :
-cp ./src/micropython_default/env :
-cp ./src/micropython_default/lib :
-cp ./src/micropython_default/main.py :  
-cp ./src/micropython_default/server :
+$ (aws-iot-pico-irrigation-control) mpremote cp -r ./src/aws_iot_pico_irrigation_control/* :
+cp ./src/aws_iot_pico_irrigation_control/env :
+cp ./src/aws_iot_pico_irrigation_control/lib :
+cp ./src/aws_iot_pico_irrigation_control/main.py :  
+cp ./src/aws_iot_pico_irrigation_control/server :
 ```
 
-You can verify this with the following command:
+You can also export the project files into a separate `./export/` directory, before copying over to the using the following commands:
 
 ```bash
-(micropython-default) mpremote fs ls
+$ (aws-iot-pico-irrigation-control) CLI export
+$ (aws-iot-pico-irrigation-control) mpremote cp -r ./export/* :
+cp ./export/env :
+cp ./export/lib :
+cp ./export/main.py :  
+cp ./export/server :
 ```
 
-A hard reset of the device and a connection to the device REPL, will allow you to view the application running with verbose
-debug messages (set main.py `_VERBOSE` global variable to False to disable):
+You can verify with the following command:
 
 ```bash
-(micropython-default) mpremote reset
+(aws-iot-pico-irrigation-control) mpremote fs ls
+```
+
+A hard reset of the device and a connection to the device `REPL`, will allow you to view the application running with verbose debug messages (set `main.py` `_VERBOSE` global variable to False to disable):
+
+```bash
+(aws-iot-pico-irrigation-control) mpremote reset
 ```
 
 Connect to the device to view the verbose debug messages:
 
 ```sh
-(micropython-default) mpremote
+(aws-iot-pico-irrigation-control) mpremote
 ```
 
 If you have not set credentials in `env/secrets.py`, the application will detect a connection issue and initialise the Pico WLAN in AP mode and start a microdot server. You can connect to the Pico W WLAN, which will have an SSID like PICO-W-<PICO_SERIAL_NUMBER> e.g. 'PICO-W-E66161234567891B'.
@@ -249,13 +310,119 @@ ASYNCIO.RUN TERMINATE
 
 As the application is async, commands can still be issued to the device, including a hard reset or filesystem wipe using mpremote.
 
-## Sphinx Documentation
+### MQTT Topic Design
+
+* The maximum number of forward slashes (/) in the MQTT topic name for AWS IoT Core is seven
+
+* Since MQTT topics are case sensitive, it is important to use a standard set of naming conventions when designing MQTT topics
+
+`General --> Specific`
+
+```sh
+irrigation/garden/front/irrigation-control
+irrigation/garden/front/irrigation-sensor
+
+irrigation/garden/rear/irrigation-control
+irrigation/garden/rear/irrigation-sensor
+```
+
+### Using the MQTT topics for telemetry
+
+`dt/<application>/<context>/<thing-name>/<dt-type>`
+
+* **dt**: Set prefix that refers to the type of message. For a telemetry topic, we use dt, short for data.
+* **application**: Identifies the overall IoT application associated with the device.
+* **context**: Single or multiple levels of additional contextual data about the message a device is publishing.
+* **thing-name**: Identifies which device is transmitting a telemetry message.
+* **dt-type** (optional): Associates a message with a particular subcomponent of a device.
+
+```sh
+dt/irrigation/garden/irrigation-control/moisture
+dt/irrigation/garden/irrigation-sensor/temperature
+```
+
+## MQTT command topic syntax
+
+Send commands:
+`cmd/<application>/<context>/<destination-id>/<req-type>`
+
+Respond to commands:
+`cmd/<application>/<context>/<destination-id>/<res-type>`
+
+* **cmd**: Prefix that refers to the type of message. Command topics use cmd.
+* **req-type**: Classifies the command.
+* **destination-id**: Identifies the destination device or application for this message.
+* **res-type**: Denotes command responses and identifies responses that are related to a previously sent command.
+
+```sh
+cmd/irrigation/garden/irrigation-control/zone
+cmd/irrigation/garden/irrigation-control/telemetry
+```
+
+## MQTT command payload syntax
+
+* **session-id**: Identifies a unique session. A requestor generates a session-id for the command and includes it in the request payload.
+* **response-topic**: In a command, there is a request for an action to happen and a response that indicates the status of the command (successful or error).
+
+Requestor --> Recipient
+
+`cmd/security/device-1/cert-rotation`
+
+In the payload of this request, the IoT application includes a field that denotes where the device (device-1) should send its response and a session identifier for tracking:
+
+```JSON
+{ "session-id": "session-1234", "response-topic": "cmd/security/app1/res" }
+```
+
+## Best practices for using AWS IoT Basic Ingest
+
+Basic Ingest optimizes data flow for high volume data ingestion workloads by removing the pub/sub Message Broker from the ingestion path. As a result, you have a more cost-effective option to send device data to other AWS services while continuing to benefit from all the security and data processing features of AWS IoT Core.
+
+Include any additional routing information after the rule name in the Basic Ingest MQTT Topic. As a best practice, AWS recommends you use the optional segments that can appear after the rule name in the MQTT topic to include relevant additional information that can be used by the AWS IoT Rule for features such as Substitution Templates, IoT Rule SQL Functions, and Where Clauses.
+
+`$aws/rules/<rule-name>/<optional-customer-defined-segments>`
+
+```sh
+$aws/rules/IrrigationData/garden/front/moisture
+$aws/rules/IrrigationData/garden/front/moisture
+
+$aws/rules/IrrigationData/garden/rear/moisture
+$aws/rules/IrrigationData/garden/rear/moisture
+
+$aws/rules/IrrigationData/garden/+/moisture
+```
+
+IoT 'IrrigationData' Rule & SQL Function:
+
+```JSON
+// MQTT message --> $aws/rules/IrrigationData/garden/rear/moisture
+
+{ "thing-id": "irrigation-control", "sensor-id": 0, "timestamp": 1727811027, "reading-u16": 15666, "reading-vdc": 0.145 }
+{ "thing-id": "irrigation-control", "sensor-id": 1, "timestamp": 1727811028, "reading-u16": 15666, "reading-vdc": 0.145 }
+{ "thing-id": "irrigation-control", "sensor-id": 2, "timestamp": 1727811029, "reading-u16": 15666, "reading-vdc": 0.145 }
+```
+
+```SQL
+SELECT reading FROM '$aws/rules/IrrigationData/garden/+/moisture' WHERE *
+```
+
+JSON:
+
+```JSON
+{
+    sensor_id: "",
+    reading: 16516,
+    timestamp: 12345678,
+}
+```
+
+### Sphinx Documentation
 
 To build the documentation with sphinx, follow the commands below:
 
 ```bash
-(micropython-default) cd docs
-(micropython-default) make html
+(aws-iot-pico-irrigation-control) cd docs
+(aws-iot-pico-irrigation-control) make html
 ```
 
 ## Credits
@@ -263,4 +430,4 @@ To build the documentation with sphinx, follow the commands below:
 1. Peter Hinch's excellent guide on [asyncio](https://github.com/peterhinch/micropython-async)
 2. [Microdot](https://microdot.readthedocs.io/en/latest/) minimalistic Python web framework inspired by Flask
 3. A detailed guide on [mpremote](https://wellys.com/posts/rp2040_mpremote/)
-4. My MicroPython dev environment using [WSL & Void Linux](https://github.com/andyrids/void-wsl-dev)
+4. MicroPython dev environment using [WSL & Void Linux](https://github.com/andyrids/void-wsl-dev)

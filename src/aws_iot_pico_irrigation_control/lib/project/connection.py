@@ -150,7 +150,7 @@ def connect_interface(WLAN: network.WLAN, verbose: bool) -> None:
             debug_message(f"TypeError: {e}", verbose)
             debug_message(f"WLAN CONNECT ERROR - SSID {WLAN_SSID}", verbose)
             raise WLANConnectionError
-        except OSError:
+        except OSError as e:
             debug_message(f"OSError: {e}", verbose)
             debug_message(f"WLAN CONNECT ERROR - SSID {WLAN_SSID}", verbose)
             raise WLANConnectionError

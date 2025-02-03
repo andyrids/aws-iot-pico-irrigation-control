@@ -1,4 +1,0 @@
-AP_SSID = None
-AP_PASSWORD = None
-WLAN_SSID = None
-WLAN_PASSWORD = None

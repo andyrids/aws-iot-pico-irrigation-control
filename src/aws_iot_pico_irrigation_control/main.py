@@ -22,6 +22,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 Functions:
     async_main: Main coroutine for application.
     catch_async_interrupt: Trap async coroutine exceptions.
+    collect_message: 
     event_timer: Get a Timer instance set to a specified interval.
     garbage_collector: Coroutine for periodic garbage collection.
     handle_async_exception: Async exception handler.
@@ -65,6 +66,7 @@ from lib.project.connection import (
     get_client_interface,
     get_network_interface,
 )
+from lib.project.irrigation import activate_solenoid, read_moisture_sensor
 from lib.project.utility import (
     debug_message,
     debug_network_status,
@@ -82,6 +84,34 @@ def fn() -> None:
 
 
 FunctionType = type(fn)
+
+
+def collect_message(
+        topic: bytes,
+        message: bytes,
+        queue: list,
+        events: dict[str, asyncio.Event],
+        verbose: bool = False
+    ) -> None:
+    """MQTT client callback function, which creates a tuple containing
+    the received message and the topic it was published to. This tuple
+    is appended to a list object denoted by queue parameter.
+
+    NOTE: The internal flag for the Event object referenced at
+    events["parse_message"] is set, on (topic, message) addition
+    to the queue object. The async Task 'parse_message' awaiting
+    this Event will continue, if the Event was not previously set.
+
+    Args:
+        topic (bytes): MQTT topic a message was received from.
+        message (bytes): MQTT message.
+        queue (list): Object to append topic & message tuple to.
+        events (dict): Event map for all coroutine Events.
+        verbose (bool, optional): Enable verbose debug messages.
+    """
+    debug_message(f"COLLECT MESSAGE FROM {topic.decode("ascii")}", verbose)
+    queue.append((topic, message))
+    events["parse_message"].set()
 
 
 async def synchronise_time(verbose: bool = False) -> bool:
@@ -200,6 +230,160 @@ async def microdot_server(app: Microdot, verbose: bool = False) -> None:
     debug_message("ASYNC TASK - MICRODOT SERVER SHUTDOWN", verbose)
 
 
+async def check_message(
+        client: MQTTClient,
+        events: dict[str, asyncio.Event],
+        verbose: bool = False
+    ):
+    """A coroutine to check for new MQTT messages published to all
+    subscribed topics.
+
+    Args:
+        client (MQTTClient): A connected MQTT client instance.
+        events (dict): Event map for all coroutine Events.
+        verbose (bool, optional): Enable verbose debug messages.
+    """
+    while True:
+        await events["check_message"].wait()
+        try:
+            client.check_msg()
+        except Exception as e:
+            debug_message(f"CHECK MESSAGE EXCEPTION: {e}", verbose)
+            sys.print_exception(e)
+        await asyncio.sleep(1)
+
+
+async def publish_telemetry(
+        client: MQTTClient,
+        topic: bytes,
+        events: dict[str, asyncio.Event],
+        verbose: bool = False
+    ) -> None:
+    """Publishes moisture sensor readings from three capacitative moisture
+    sensors and publishes the readings as JSON to the specified MQTT topic.
+
+    NOTE: This coroutine awaits internal flag setting for 'publish_telemetry'
+    & 'connection_issue' Events. If the 'connection_issue' Event is cleared, 
+    function execution will pause, even though a timer will periodically set 
+    the 'telemetry_timer' Event flag.
+
+    Args:
+        client (MQTTClient): MQTT client
+        topic (bytes): MQTT topic to publish telemetry data to.
+        events (dict): Event map for all coroutine Events.
+        verbose (bool, optional): Enable verbose debug messages.
+    """
+    while True:
+        await events["publish_telemetry"].wait()
+        await events["connection_issue"].wait()
+        debug_message(f"ASYNC TASK - PUBLISH TELEMETRY", verbose)
+        try:
+            debug_message(f"READING ADC 0-2 MOISTURE SENSORS", verbose)
+            messages = await asyncio.gather(
+                read_moisture_sensor(0, "irrigation-control"),
+                read_moisture_sensor(1, "irrigation-control"),
+                read_moisture_sensor(2, "irrigation-control"),
+            )
+
+            # json.dumps(message, separators=(',', ':'))
+            messages = map(json.dumps, messages)
+            published = await asyncio.gather(
+                *[publish_message(client, topic, m, verbose) for m in messages]
+            )
+
+            if any(published):
+                success = ("PARTIAL SUCCESS", "SUCCESS")[all(published)]
+                debug_message(f"ASYNC TASK - PUBLISH TELEMETRY {success}", verbose)
+            else:
+                debug_message(f"ASYNC TASK - PUBLISH TELEMETRY FAILURE", verbose)
+        except asyncio.TimeoutError as e:
+            debug_message(f"ASYNC TASK - PUBLISH TELEMETRY TIMEOUT EXCEPTION {e}", verbose)
+        except Exception as e:
+            debug_message(f"ASYNC TASK - PUBLISH TELEMETRY EXCEPTION {e}", verbose)
+            sys.print_exception(e)
+        finally:
+            events["publish_telemetry"].clear()
+
+
+async def publish_message(
+        client: MQTTClient,
+        topic: bytes,
+        message: str,
+        verbose: bool = False
+    ) -> bool:
+    """Publish a message to the specified MQTT topic.
+
+    Args:
+        client (MQTTClient): MQTT client.
+        topic (bytes): MQTT message topic.
+        events (dict): Event map for all coroutine Events.
+        verbose (bool, optional): Enable verbose debug messages.
+
+    Returns:
+        True if message published successfully, else False.
+    """
+    try:
+        message_b = bytes(message, "utf-8")
+        client.publish(topic, message_b)
+    except Exception as e:
+        debug_message(f"PUBLISH MESSAGE EXCEPTION: {e}", verbose)
+        debug_message(f"MQTT TOPIC: {topic}", verbose)
+        sys.print_exception(e)
+        return False
+    return True
+
+
+async def parse_message(
+        client: MQTTClient, 
+        events: dict[str, asyncio.Event], 
+        command_queue: list[tuple[bytes, bytes]], 
+        verbose: bool = False
+    ) -> None:
+    """Parse an MQTT message from a queue and facilitate the task
+    indicated by the message command.
+
+    MQTT command message schema:
+        { 
+            "thing-id": str, 
+            "session-id": int, 
+            "response-topic": str, 
+            "command": dict 
+        }
+
+    MQTT message["command"] examples:
+        - { "type": "irrigation-zone", "zone-id": 1|2|3|4|5, "duration": 10 }
+        - { "type": "sensor-reading", "sensor-id": 0|1|2 }
+
+    Args:
+        client (MQTTClient): MQTT client instance.
+        events (dict): Event map for all coroutine Events.
+        command_queue (list): Queue containing MQTT topics & messages.
+        verbose (bool, optional): Enable verbose debug messages.
+    """
+    while True:
+        # Event internal flag set by "collect_message" function
+        await events["parse_message"].wait()
+
+        topic, message = command_queue.pop()
+        message = json.loads(message)
+
+        debug_message(f"PARSING MESSAGE FROM {topic}", verbose)
+        debug_message(f"MESSAGE COMMAND: {message['command']}", verbose)
+
+        response = {"thing-id": "irrigation-control", "session-id": message["session-id"]}
+
+        command = message["command"]
+        if command["type"] == "irrigation-zone":
+            await activate_solenoid(command["zone-id"], command["duration"])
+        if command["type"] == "sensor-reading":
+            response["sensor-reading"] = await read_moisture_sensor(command["sensor-id"], "irrigation-control")
+
+        await publish_message(client, bytes(message["response-topic"], "utf-8"), json.dumps(response))
+        # if command_queue is empty reset Event internal flag
+        if not command_queue:
+            events["parse_message"].clear()
+
+
 def event_timer(
     event: asyncio.Event, period: int, verbose: bool = False
 ) -> Timer:
@@ -223,7 +407,7 @@ def event_timer(
         event.set()
 
     timer = Timer()
-    timer.init(period=period, mode=machine.Timer.PERIODIC, callback=set_event)
+    timer.init(period=period, mode=Timer.PERIODIC, callback=set_event)
     return timer
 
 
@@ -290,6 +474,21 @@ async def async_main(verbose: bool = False):
     WLAN, WLAN_MODE = get_network_interface(verbose)
     debug_network_status(WLAN, WLAN_MODE, verbose)
 
+    # MQTT client instance with SSL context
+    MQTT = get_client_interface(verbose)
+
+    # MQTT command queue
+    command_queue = []
+
+    # MQTT topics
+    _DT_MOISTURE = const(b"dt/irrigation/garden/irrigation-control/moisture")
+    _RULE_MOISTURE = const(b"$aws/rules/IrrigationData/garden/rear/moisture")
+    _CMD_ZONE = const(b"cmd/irrigation/garden/irrigation-control/zone")
+    _CMD_TELEMETRY = const(b"cmd/irrigation/garden/irrigation-control/telemetry")
+
+    # Telemetry timer (milliseconds)
+    _DT_TIMER_MS = const(3_600_00)
+
     # event loop & exception handler setup
     event_loop = asyncio.get_event_loop()
     event_loop.set_exception_handler(handle_async_exception)
@@ -297,6 +496,9 @@ async def async_main(verbose: bool = False):
     # asyncio Event instances
     async_events = {}
     async_events["connection_issue"] = asyncio.Event()
+    async_events["publish_telemetry"] = asyncio.Event()
+    async_events["check_message"] = asyncio.Event()
+    async_events["parse_message"] = asyncio.Event()
 
     gc.collect()
 
@@ -305,17 +507,73 @@ async def async_main(verbose: bool = False):
     async_tasks["garbage_collector"] = asyncio.create_task(
         garbage_collector(verbose)
     )
+    async_tasks["publish_telemetry"] = asyncio.create_task(
+        publish_telemetry(MQTT, _DT_MOISTURE, async_events, verbose)
+    )
+    async_tasks["check_message"] = asyncio.create_task(
+        check_message(MQTT, async_events, verbose)
+    )
+    async_tasks["parse_message"] = asyncio.create_task(
+        parse_message(MQTT, async_events, command_queue, verbose)
+    )
 
     await asyncio.sleep(5)
+
+
+    def wrap_callback(
+            queue: list,
+            events: dict[str, asyncio.Event],
+            verbose: bool = False,
+        ) -> FunctionType:
+        """Wrap a coroutine function, adding additional parameters
+        alongside topic & message parameters passed by the MQTT client
+        instance on message receipt.
+
+        Args:
+            queue (list): List to append MQTT topic & messages.
+            events (dict): Event map for all coroutine Events.
+            verbose (bool, optional): Enable verbose debug messages.
+
+        Returns:
+            A wrapped coroutine function
+        """
+        # coroutine: FunctionType, *args
+        def coroutine_decorator(coroutine: FunctionType) -> FunctionType:
+            """Add queue & verbose parameters to coroutine_wrapper args."""
+            def coroutine_wrapper(topic: bytes, message: bytes):
+                coroutine(topic, message, queue, events, verbose)
+            return coroutine_wrapper
+        return coroutine_decorator
+
+
+    # MQTT client passes MQTT topic & message values to the callback
+    # function set with 'set_callback' method. 'wrap_callback' function
+    # passes extra parameters to the callback function.
+    MQTT.set_callback(wrap_callback(command_queue, async_events, verbose)(collect_message))
 
     # check if WLAN connected in STA mode
     if not connection_issue(WLAN, WLAN_MODE, verbose):
         # if 'synchronise_time' coroutine completes successfully...
         if await synchronise_time(verbose):
+            debug_message(f"CONNECTING MQTT CLIENT", verbose)
+            # ...then we can connect the MQTT client
+            MQTT.connect(clean_session=True)
+            # and subscribe to the relevant MQTT topics
+            MQTT.subscribe(_CMD_ZONE)
+            MQTT.subscribe(_CMD_TELEMETRY)
+
+            debug_message(f"MQTT CLIENT CONNECTED", verbose)
+            # we trigger MQTT message check Task coroutine
+            async_events["check_message"].set()
             # we indicate no connection issues
             async_events["connection_issue"].set()
         else:
             debug_message(f"SYNCHRONISE TIME FAILED", verbose)
+            debug_message(f"NOT CONNECTING MQTT CLIENT", verbose)
+    
+    # get a Timer which sets 'publish_telemetry' Event flag every _DT_TIMER_MS
+    telemetry_timer = event_timer(async_events["publish_telemetry"], _DT_TIMER_MS, verbose)
+    debug_message(f"TELEMETRY TIMER SET TO {_DT_TIMER_MS} MS", verbose)
 
     # Microdot HTTP server instance
     app = Microdot()
@@ -340,7 +598,7 @@ async def async_main(verbose: bool = False):
 
                 ip, subnet, gateway, dns = WLAN.ifconfig()
 
-                debug_message(f"AFTER MICRODOT SERVER STARTUP:", verbose)
+                debug_message(f"AFTER MICRODOT SERVER STARTUP:\n", verbose)
                 debug_message(f"1. CONNECT TO PICO W WLAN", verbose)
                 debug_message(f"2. NAVIGATE TO http://{gateway}:80", verbose)
                 debug_message(f"3. ENTER YOUR WLAN SSID & PASSWORD", verbose)
@@ -358,8 +616,16 @@ async def async_main(verbose: bool = False):
                 async_events["connection_issue"].set()
                 await asyncio.sleep(1)
                 # if NTP never synchronised
-                if not (await synchronise_time(verbose)):
+                if (await synchronise_time(verbose)):
+                    if not (previous_session := MQTT.connect(clean_session=False)):
+                        debug_message(f"NO PREVIOUS MQTT SESSION", verbose)
+                        debug_message(f"SUBSCRIBING TO MQTT TOPICS", verbose)
+                        MQTT.subscribe(_CMD_ZONE)
+                        MQTT.subscribe(_CMD_TELEMETRY)
+                    async_events["check_message"].set()
+                else:
                     debug_message(f"SYNCHRONISE TIME FAILED", verbose)
+                    debug_message(f"NOT CONNECTING MQTT CLIENT", verbose)
             # hand over to other async tasks
             await asyncio.sleep(0)
     except (OSError, KeyboardInterrupt, MQTTSecretsError) as e:

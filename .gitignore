@@ -2,9 +2,9 @@
 **/*.mpy
 
 # Certificates
-certs/*.key
-certs/*.crt
-certs/*.der
+**/certs/*.key
+**/certs/*.crt
+**/certs/*.der
 
 # Export
 export/*

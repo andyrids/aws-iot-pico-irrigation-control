@@ -1,8 +1,8 @@
 [project]
-name = "micropython-default"
-description = "Micropython project template for the Raspberry Pi Pico W"
-authors = [{name = "Andrew Ridyard", email = "ridyard12@gmail.com"}]
-maintainers = [{name = "Andrew Ridyard", email = "ridyard12@gmail.com"}]
+name = "aws-iot-pico-irrigation-control"
+description = "RPi Pico W Irrigation Control Project using AWS IoT Core."
+authors = [{name = "Andrew Ridyard", email = "andrew.ridyard@proton.me"}]
+maintainers = [{name = "Andrew Ridyard", email = "andrew.ridyard@proton.me"}]
 version = "0.0.2"
 license = {file = "LICENSE"}
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -19,7 +19,6 @@ classifiers=[
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Operating System :: OS Independent",
-    "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Software Development :: Embedded Systems",
 ]
 keywords = ["rpi", "pico", "micropython", "bootstrap", "microdot"]
@@ -37,8 +36,8 @@ dev = [
 ]
 
 [project.urls]
-Repository = "https://github.com/andyrids/cookiecutter-aws-iot-pico-thing"
-Issues = "https://github.com/andyrids/cookiecutter-aws-iot-pico-thing/issues"
+Repository = "https://github.com/andyrids/aws-iot-pico-irrigation-control"
+Issues = "https://github.com/andyrids/aws-iot-pico-irrigation-control/issues"
 
 [tool.ruff]
 exclude = ["lib", "env"]
@@ -68,7 +67,7 @@ addopts = ["--import-mode=importlib"]
 picoproject = { git = "https://github.com/andyrids/picoproject" }
 
 [tool.bumpversion]
-current_version = "0.0.2"
+current_version = "0.0.1"
 commit = true
 commit_args = "--no-verify"
 tag = true
